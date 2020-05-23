@@ -13,6 +13,7 @@ struct State {
     sc_desc: SwapChainDescriptor,
     swap_chain: SwapChain,
     size: PhysicalSize<u32>,
+    clear_color: Color
 }
 
 impl State {
@@ -53,7 +54,8 @@ impl State {
             queue,
             sc_desc,
             swap_chain,
-            size
+            size,
+            clear_color: Color::BLACK,
         }
     }
 
@@ -65,7 +67,18 @@ impl State {
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        false
+        match event {
+            WindowEvent::CursorMoved  { position, .. } => {
+                self.clear_color = Color {
+                    r: position.x as f64 / self.size.width as f64,
+                    g: position.y as f64 / self.size.height as f64,
+                    b: 1.0,
+                    a: 1.0
+                };
+                true
+            }
+            _ => false,
+        }
     }
 
     fn update(&mut self) {
@@ -89,12 +102,7 @@ impl State {
                         resolve_target: None,
                         load_op: LoadOp::Clear,
                         store_op: StoreOp::Clear,
-                        clear_color: Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0
-                        }
+                        clear_color: self.clear_color,
                     }
                 ],
                 depth_stencil_attachment: None
@@ -119,26 +127,28 @@ fn main() {
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::WindowEvent { ref event, window_id} if window_id == window.id() => {
-                match event {
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                    WindowEvent::KeyboardInput { input, .. } => {
-                        match input {
-                            KeyboardInput {
-                               state: ElementState::Pressed,
-                               virtual_keycode: Some(VirtualKeyCode::Escape),
-                               ..
-                            } => *control_flow = ControlFlow::Exit,
-                            _ => ()
+                if !state.input(event) {
+                    match event {
+                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                        WindowEvent::KeyboardInput { input, .. } => {
+                            match input {
+                                KeyboardInput {
+                                   state: ElementState::Pressed,
+                                   virtual_keycode: Some(VirtualKeyCode::Escape),
+                                   ..
+                                } => *control_flow = ControlFlow::Exit,
+                                _ => ()
+                            }
+                        },
+                        WindowEvent::Resized(physical_size) => {
+                            state.resize(*physical_size);
                         }
-                    },
-                    WindowEvent::Resized(physical_size) => {
-                        state.resize(*physical_size);
+                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                            // new_inner_size is &mut so w have to dereference it twice
+                            state.resize(**new_inner_size)
+                        }
+                        _ => ()
                     }
-                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        // new_inner_size is &mut so w have to dereference it twice
-                        state.resize(**new_inner_size)
-                    }
-                    _ => ()
                 }
             },
             Event::RedrawRequested(_) => {
