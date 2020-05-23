@@ -13,8 +13,9 @@ struct State {
     sc_desc: SwapChainDescriptor,
     swap_chain: SwapChain,
     size: PhysicalSize<u32>,
-    clear_color: Color,
     render_pipeline: RenderPipeline,
+    challenge_render_pipeline: RenderPipeline,
+    use_color: bool,
 }
 
 impl State {
@@ -51,20 +52,31 @@ impl State {
         // Include GLSL shaders
         let vs_src = include_str!("shader.vert");
         let fs_src = include_str!("shader.frag");
+        let vs_src_c = include_str!("challenge.vert");
+        let fs_src_c = include_str!("challenge.frag");
 
         // Compile the shaders
         let vs_spirv = glsl_to_spirv::compile(vs_src, glsl_to_spirv::ShaderType::Vertex).unwrap();
         let fs_spirv = glsl_to_spirv::compile(fs_src, glsl_to_spirv::ShaderType::Fragment).unwrap();
+        let vs_spirv_c = glsl_to_spirv::compile(vs_src_c, glsl_to_spirv::ShaderType::Vertex).unwrap();
+        let fs_spirv_c = glsl_to_spirv::compile(fs_src_c, glsl_to_spirv::ShaderType::Fragment).unwrap();
 
         // Load the SPIR-V data
         let vs_data = wgpu::read_spirv(vs_spirv).unwrap();
         let fs_data = wgpu::read_spirv(fs_spirv).unwrap();
+        let vs_data_c = wgpu::read_spirv(vs_spirv_c).unwrap();
+        let fs_data_c = wgpu::read_spirv(fs_spirv_c).unwrap();
 
         // Create shader modules
         let vs_module = device.create_shader_module(&vs_data);
         let fs_module = device.create_shader_module(&fs_data);
+        let vs_module_c = device.create_shader_module(&vs_data_c);
+        let fs_module_c = device.create_shader_module(&fs_data_c);
 
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            bind_group_layouts: &[]
+        });
+        let challenge_render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             bind_group_layouts: &[]
         });
 
@@ -110,6 +122,44 @@ impl State {
             alpha_to_coverage_enabled: false
         });
 
+        let challenge_render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            layout: &challenge_render_pipeline_layout,
+            vertex_stage: ProgrammableStageDescriptor {
+                module: &vs_module_c,
+                entry_point: "main"
+            },
+            fragment_stage: Some(ProgrammableStageDescriptor {
+                module: &fs_module_c,
+                entry_point: "main"
+            }),
+            rasterization_state: Some(RasterizationStateDescriptor {
+                front_face: FrontFace::Ccw,
+                cull_mode: CullMode::Back,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0
+            }),
+            primitive_topology: PrimitiveTopology::TriangleList,
+            color_states: &[
+                ColorStateDescriptor {
+                    format: sc_desc.format,
+                    alpha_blend: BlendDescriptor::REPLACE,
+                    color_blend: BlendDescriptor::REPLACE,
+                    write_mask: ColorWrite::ALL
+                }
+            ],
+            depth_stencil_state: None,
+            vertex_state: VertexStateDescriptor {
+                index_format: IndexFormat::Uint16,
+                vertex_buffers: &[]
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false
+        });
+
+        let use_color = true;
+
         Self {
             surface,
             adapter,
@@ -118,8 +168,9 @@ impl State {
             sc_desc,
             swap_chain,
             size,
-            clear_color: Color::BLACK,
-            render_pipeline
+            render_pipeline,
+            challenge_render_pipeline,
+            use_color
         }
     }
 
@@ -132,15 +183,17 @@ impl State {
 
     fn input(&mut self, event: &WindowEvent) -> bool {
         match event {
-            WindowEvent::CursorMoved  { position, .. } => {
-                self.clear_color = Color {
-                    r: position.x as f64 / self.size.width as f64,
-                    g: position.y as f64 / self.size.height as f64,
-                    b: 1.0,
-                    a: 1.0
-                };
+            WindowEvent::KeyboardInput {
+                input: KeyboardInput {
+                    state,
+                    virtual_keycode: Some(VirtualKeyCode::Space),
+                    ..
+                },
+                ..
+            } => {
+                self.use_color = *state == ElementState::Released;
                 true
-            }
+            },
             _ => false,
         }
     }
@@ -166,14 +219,23 @@ impl State {
                         resolve_target: None,
                         load_op: LoadOp::Clear,
                         store_op: StoreOp::Store,
-                        clear_color: self.clear_color,
+                        clear_color: Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0
+                        },
                     }
                 ],
                 depth_stencil_attachment: None
             });
 
             // Draw a triangle
-            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_pipeline(if self.use_color {
+                &self.render_pipeline
+            } else {
+                &self.challenge_render_pipeline
+            });
             render_pass.draw(0..3, 0..1);
         }
 
