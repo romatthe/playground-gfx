@@ -1,9 +1,67 @@
+use std::mem;
 use winit::event_loop::{EventLoop, ControlFlow};
 use winit::window::{WindowBuilder, Window};
 use winit::event::{Event, WindowEvent, ElementState, KeyboardInput, VirtualKeyCode};
 use winit::dpi::PhysicalSize;
-use wgpu::{BackendBit, DeviceDescriptor, SwapChainDescriptor, TextureFormat, Adapter, Surface, Device, Queue, SwapChain, TextureUsage, PresentMode, CommandEncoderDescriptor, RenderPassDescriptor, RenderPassColorAttachmentDescriptor, LoadOp, StoreOp, Color, RenderPipeline, PipelineLayoutDescriptor, RenderPipelineDescriptor, ProgrammableStageDescriptor, RasterizationStateDescriptor, FrontFace, CullMode, ColorStateDescriptor, BlendDescriptor, ColorWrite, PrimitiveTopology, VertexStateDescriptor, IndexFormat};
+use wgpu::{BufferUsage, BackendBit, DeviceDescriptor, SwapChainDescriptor, TextureFormat, Adapter, Surface, Device, Queue, SwapChain, TextureUsage, PresentMode, CommandEncoderDescriptor, RenderPassDescriptor, RenderPassColorAttachmentDescriptor, LoadOp, StoreOp, Color, RenderPipeline, PipelineLayoutDescriptor, RenderPipelineDescriptor, ProgrammableStageDescriptor, RasterizationStateDescriptor, FrontFace, CullMode, ColorStateDescriptor, BlendDescriptor, ColorWrite, PrimitiveTopology, VertexStateDescriptor, IndexFormat, Buffer, VertexBufferDescriptor, BufferAddress, InputStepMode, VertexAttributeDescriptor, VertexFormat};
 use futures::executor;
+
+const VERTICES: &[Vertex] = &[
+    Vertex { position: [-0.0868241, 0.49240386, 0.0], color: [0.5, 0.0, 0.5] },
+    Vertex { position: [-0.49513406, 0.06958647, 0.0], color: [0.5, 0.0, 0.5] },
+    Vertex { position: [-0.21918549, -0.44939706, 0.0], color: [0.5, 0.0, 0.5] },
+    Vertex { position: [0.35966998, -0.3473291, 0.0], color: [0.5, 0.0, 0.5] },
+    Vertex { position: [0.44147372, 0.2347359, 0.0],color: [0.5, 0.0, 0.5] },
+];
+
+const INDICES: &[u16] = &[
+    0, 1, 4,
+    1, 2, 4,
+    2, 3, 4,
+];
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct Vertex {
+    position: [f32; 3],
+    color: [f32; 3],
+}
+
+impl Vertex {
+    fn descriptor<'a>() -> VertexBufferDescriptor<'a> {
+        VertexBufferDescriptor {
+            // How wide is the Vertex
+            stride: mem::size_of::<Vertex>() as BufferAddress,
+            // How often should it move to the next vertex
+            step_mode: InputStepMode::Vertex,
+            // Attributes of our vertex data
+            attributes: &[
+                VertexAttributeDescriptor {
+                    // Where does the attribute start?
+                    offset: 0,
+                    // Where to store the attribute, ex: layout(location=0) in vec3 x would be position
+                    shader_location: 0,
+                    // Shape of the attribute, corresponds to vec3 in shader
+                    format: VertexFormat::Float3,
+                },
+                VertexAttributeDescriptor {
+                    // Where does the attribute start?
+                    offset: mem::size_of::<[f32; 3]>() as BufferAddress,
+                    // Where to store the attribute, ex: layout(location=1) in vec3 x would be color
+                    shader_location: 1,
+                    // Shape of the attribute, corresponds to vec3 in shader
+                    format: VertexFormat::Float3,
+                }
+            ]
+        }
+    }
+}
+
+// Plain old data: Can be interpreted as &[u8]
+unsafe impl bytemuck::Pod for Vertex { }
+
+// We can use std::mem::zeroed()
+unsafe impl bytemuck::Zeroable for Vertex { }
 
 struct State {
     surface: Surface,
@@ -14,14 +72,16 @@ struct State {
     swap_chain: SwapChain,
     size: PhysicalSize<u32>,
     render_pipeline: RenderPipeline,
-    challenge_render_pipeline: RenderPipeline,
-    use_color: bool,
+    vertex_buffer: Buffer,
+    index_buffer: Buffer,
+    num_indices: u32,
 }
 
 impl State {
     async fn new(window: &Window) -> Self {
         let size = window.inner_size();
         let surface = wgpu::Surface::create(window);
+        let num_indices = INDICES.len() as u32;
 
         let adapter = Adapter::request(
             &wgpu::RequestAdapterOptions {
@@ -52,31 +112,20 @@ impl State {
         // Include GLSL shaders
         let vs_src = include_str!("shader.vert");
         let fs_src = include_str!("shader.frag");
-        let vs_src_c = include_str!("challenge.vert");
-        let fs_src_c = include_str!("challenge.frag");
 
         // Compile the shaders
         let vs_spirv = glsl_to_spirv::compile(vs_src, glsl_to_spirv::ShaderType::Vertex).unwrap();
         let fs_spirv = glsl_to_spirv::compile(fs_src, glsl_to_spirv::ShaderType::Fragment).unwrap();
-        let vs_spirv_c = glsl_to_spirv::compile(vs_src_c, glsl_to_spirv::ShaderType::Vertex).unwrap();
-        let fs_spirv_c = glsl_to_spirv::compile(fs_src_c, glsl_to_spirv::ShaderType::Fragment).unwrap();
 
         // Load the SPIR-V data
         let vs_data = wgpu::read_spirv(vs_spirv).unwrap();
         let fs_data = wgpu::read_spirv(fs_spirv).unwrap();
-        let vs_data_c = wgpu::read_spirv(vs_spirv_c).unwrap();
-        let fs_data_c = wgpu::read_spirv(fs_spirv_c).unwrap();
 
         // Create shader modules
         let vs_module = device.create_shader_module(&vs_data);
         let fs_module = device.create_shader_module(&fs_data);
-        let vs_module_c = device.create_shader_module(&vs_data_c);
-        let fs_module_c = device.create_shader_module(&fs_data_c);
 
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            bind_group_layouts: &[]
-        });
-        let challenge_render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             bind_group_layouts: &[]
         });
 
@@ -113,7 +162,9 @@ impl State {
             vertex_state: VertexStateDescriptor {
                 // Use 16-bit integers for indexing
                 index_format: IndexFormat::Uint16,
-                vertex_buffers: &[]
+                vertex_buffers: &[
+                    Vertex::descriptor()
+                ]
             },
             sample_count: 1,
             // Specifies which samples should be active, !0 is all of them
@@ -122,41 +173,15 @@ impl State {
             alpha_to_coverage_enabled: false
         });
 
-        let challenge_render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            layout: &challenge_render_pipeline_layout,
-            vertex_stage: ProgrammableStageDescriptor {
-                module: &vs_module_c,
-                entry_point: "main"
-            },
-            fragment_stage: Some(ProgrammableStageDescriptor {
-                module: &fs_module_c,
-                entry_point: "main"
-            }),
-            rasterization_state: Some(RasterizationStateDescriptor {
-                front_face: FrontFace::Ccw,
-                cull_mode: CullMode::Back,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0
-            }),
-            primitive_topology: PrimitiveTopology::TriangleList,
-            color_states: &[
-                ColorStateDescriptor {
-                    format: sc_desc.format,
-                    alpha_blend: BlendDescriptor::REPLACE,
-                    color_blend: BlendDescriptor::REPLACE,
-                    write_mask: ColorWrite::ALL
-                }
-            ],
-            depth_stencil_state: None,
-            vertex_state: VertexStateDescriptor {
-                index_format: IndexFormat::Uint16,
-                vertex_buffers: &[]
-            },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false
-        });
+        let vertex_buffer = device.create_buffer_with_data(
+            bytemuck::cast_slice(VERTICES),
+            BufferUsage::VERTEX,
+        );
+
+        let index_buffer = device.create_buffer_with_data(
+            bytemuck::cast_slice(INDICES),
+            BufferUsage::INDEX
+        );
 
         let use_color = true;
 
@@ -169,8 +194,9 @@ impl State {
             swap_chain,
             size,
             render_pipeline,
-            challenge_render_pipeline,
-            use_color
+            vertex_buffer,
+            index_buffer,
+            num_indices,
         }
     }
 
@@ -182,20 +208,7 @@ impl State {
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        match event {
-            WindowEvent::KeyboardInput {
-                input: KeyboardInput {
-                    state,
-                    virtual_keycode: Some(VirtualKeyCode::Space),
-                    ..
-                },
-                ..
-            } => {
-                self.use_color = *state == ElementState::Released;
-                true
-            },
-            _ => false,
-        }
+        false
     }
 
     fn update(&mut self) {
@@ -230,13 +243,10 @@ impl State {
                 depth_stencil_attachment: None
             });
 
-            // Draw a triangle
-            render_pass.set_pipeline(if self.use_color {
-                &self.render_pipeline
-            } else {
-                &self.challenge_render_pipeline
-            });
-            render_pass.draw(0..3, 0..1);
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_vertex_buffer(0, &self.vertex_buffer, 0, 0);
+            render_pass.set_index_buffer(&self.index_buffer, 0, 0);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
         self.queue.submit(&[
