@@ -1,20 +1,48 @@
 mod texture;
 
 use futures::executor;
+use image::GenericImageView;
 use std::mem;
-use wgpu::{Adapter, BackendBit, BlendDescriptor, Buffer, BufferAddress, BufferUsage, Color, ColorStateDescriptor, ColorWrite, CommandEncoderDescriptor, CullMode, Device, DeviceDescriptor, FrontFace, IndexFormat, InputStepMode, LoadOp, PipelineLayoutDescriptor, PresentMode, PrimitiveTopology, ProgrammableStageDescriptor, Queue, RasterizationStateDescriptor, RenderPassColorAttachmentDescriptor, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, StoreOp, Surface, SwapChain, SwapChainDescriptor, TextureFormat, TextureUsage, VertexAttributeDescriptor, VertexBufferDescriptor, VertexFormat, VertexStateDescriptor, Extent3d, TextureDescriptor, TextureDimension, BufferCopyView, TextureCopyView, Origin3d, SamplerDescriptor, AddressMode, FilterMode, CompareFunction, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, TextureViewDimension, TextureComponentType, ShaderStage, BindGroupDescriptor, Binding, BindingResource, Texture, TextureView, Sampler, BindGroup};
+use wgpu::{
+    Adapter, AddressMode, BackendBit, BindGroup, BindGroupDescriptor, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, Binding, BindingResource, BindingType, BlendDescriptor, Buffer,
+    BufferAddress, BufferCopyView, BufferUsage, Color, ColorStateDescriptor, ColorWrite,
+    CommandEncoderDescriptor, CompareFunction, CullMode, Device, DeviceDescriptor, Extent3d,
+    FilterMode, FrontFace, IndexFormat, InputStepMode, LoadOp, Origin3d, PipelineLayoutDescriptor,
+    PresentMode, PrimitiveTopology, ProgrammableStageDescriptor, Queue,
+    RasterizationStateDescriptor, RenderPassColorAttachmentDescriptor, RenderPassDescriptor,
+    RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerDescriptor, ShaderStage, StoreOp,
+    Surface, SwapChain, SwapChainDescriptor, Texture, TextureComponentType, TextureCopyView,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureUsage, TextureView,
+    TextureViewDimension, VertexAttributeDescriptor, VertexBufferDescriptor, VertexFormat,
+    VertexStateDescriptor,
+};
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
-use image::GenericImageView;
 
 const VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.0868241, 0.49240386, 0.0], tex_coords: [0.4131759, 0.00759614], },
-    Vertex { position: [-0.49513406, 0.06958647, 0.0], tex_coords: [0.0048659444, 0.43041354], },
-    Vertex { position: [-0.21918549, -0.44939706, 0.0], tex_coords: [0.28081453, 0.949397057], },
-    Vertex { position: [0.35966998, -0.3473291, 0.0], tex_coords: [0.85967, 0.84732911], },
-    Vertex { position: [0.44147372, 0.2347359, 0.0], tex_coords: [0.9414737, 0.2652641], },
+    Vertex {
+        position: [-0.0868241, 0.49240386, 0.0],
+        tex_coords: [0.4131759, 0.00759614],
+    },
+    Vertex {
+        position: [-0.49513406, 0.06958647, 0.0],
+        tex_coords: [0.0048659444, 0.43041354],
+    },
+    Vertex {
+        position: [-0.21918549, -0.44939706, 0.0],
+        tex_coords: [0.28081453, 0.949397057],
+    },
+    Vertex {
+        position: [0.35966998, -0.3473291, 0.0],
+        tex_coords: [0.85967, 0.84732911],
+    },
+    Vertex {
+        position: [0.44147372, 0.2347359, 0.0],
+        tex_coords: [0.9414737, 0.2652641],
+    },
 ];
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
@@ -118,7 +146,8 @@ impl State {
 
         // Load the tree picture
         let diffuse_bytes = include_bytes!("../resources/happy-tree.png");
-        let (diffuse_texture, cmd_buffer) = texture::Texture::from_bytes(&device, diffuse_bytes).unwrap();
+        let (diffuse_texture, cmd_buffer) =
+            texture::Texture::from_bytes(&device, diffuse_bytes).unwrap();
 
         queue.submit(&[cmd_buffer]);
 
@@ -135,27 +164,26 @@ impl State {
         //     compare: CompareFunction::Always
         // });
         //
-        let texture_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            bindings: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStage::FRAGMENT,
-                    ty: BindingType::SampledTexture {
-                        multisampled: false,
-                        dimension: TextureViewDimension::D2,
-                        component_type: TextureComponentType::Uint,
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                bindings: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStage::FRAGMENT,
+                        ty: BindingType::SampledTexture {
+                            multisampled: false,
+                            dimension: TextureViewDimension::D2,
+                            component_type: TextureComponentType::Uint,
+                        },
                     },
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStage::FRAGMENT,
-                    ty: BindingType::Sampler {
-                        comparison: false,
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStage::FRAGMENT,
+                        ty: BindingType::Sampler { comparison: false },
                     },
-                },
-            ],
-            label: Some("texture_bind_group_layout"),
-        });
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
 
         let diffuse_bind_group = device.create_bind_group(&BindGroupDescriptor {
             layout: &texture_bind_group_layout,
