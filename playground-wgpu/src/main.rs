@@ -1,41 +1,20 @@
+mod texture;
+
 use futures::executor;
 use std::mem;
-use wgpu::{
-    Adapter, BackendBit, BlendDescriptor, Buffer, BufferAddress, BufferUsage, Color,
-    ColorStateDescriptor, ColorWrite, CommandEncoderDescriptor, CullMode, Device, DeviceDescriptor,
-    FrontFace, IndexFormat, InputStepMode, LoadOp, PipelineLayoutDescriptor, PresentMode,
-    PrimitiveTopology, ProgrammableStageDescriptor, Queue, RasterizationStateDescriptor,
-    RenderPassColorAttachmentDescriptor, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, StoreOp, Surface, SwapChain, SwapChainDescriptor, TextureFormat,
-    TextureUsage, VertexAttributeDescriptor, VertexBufferDescriptor, VertexFormat,
-    VertexStateDescriptor,
-};
+use wgpu::{Adapter, BackendBit, BlendDescriptor, Buffer, BufferAddress, BufferUsage, Color, ColorStateDescriptor, ColorWrite, CommandEncoderDescriptor, CullMode, Device, DeviceDescriptor, FrontFace, IndexFormat, InputStepMode, LoadOp, PipelineLayoutDescriptor, PresentMode, PrimitiveTopology, ProgrammableStageDescriptor, Queue, RasterizationStateDescriptor, RenderPassColorAttachmentDescriptor, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, StoreOp, Surface, SwapChain, SwapChainDescriptor, TextureFormat, TextureUsage, VertexAttributeDescriptor, VertexBufferDescriptor, VertexFormat, VertexStateDescriptor, Extent3d, TextureDescriptor, TextureDimension, BufferCopyView, TextureCopyView, Origin3d, SamplerDescriptor, AddressMode, FilterMode, CompareFunction, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, TextureViewDimension, TextureComponentType, ShaderStage, BindGroupDescriptor, Binding, BindingResource, Texture, TextureView, Sampler, BindGroup};
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
+use image::GenericImageView;
 
 const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
-        color: [0.5, 0.0, 0.5],
-    },
-    Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
-        color: [0.5, 0.0, 0.5],
-    },
-    Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
-        color: [0.5, 0.0, 0.5],
-    },
-    Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
-        color: [0.5, 0.0, 0.5],
-    },
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        color: [0.5, 0.0, 0.5],
-    },
+    Vertex { position: [-0.0868241, 0.49240386, 0.0], tex_coords: [0.4131759, 0.00759614], },
+    Vertex { position: [-0.49513406, 0.06958647, 0.0], tex_coords: [0.0048659444, 0.43041354], },
+    Vertex { position: [-0.21918549, -0.44939706, 0.0], tex_coords: [0.28081453, 0.949397057], },
+    Vertex { position: [0.35966998, -0.3473291, 0.0], tex_coords: [0.85967, 0.84732911], },
+    Vertex { position: [0.44147372, 0.2347359, 0.0], tex_coords: [0.9414737, 0.2652641], },
 ];
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
@@ -44,7 +23,7 @@ const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
 #[derive(Copy, Clone, Debug)]
 struct Vertex {
     position: [f32; 3],
-    color: [f32; 3],
+    tex_coords: [f32; 2],
 }
 
 impl Vertex {
@@ -70,7 +49,7 @@ impl Vertex {
                     // Where to store the attribute, ex: layout(location=1) in vec3 x would be color
                     shader_location: 1,
                     // Shape of the attribute, corresponds to vec3 in shader
-                    format: VertexFormat::Float3,
+                    format: VertexFormat::Float2,
                 },
             ],
         }
@@ -95,6 +74,10 @@ struct State {
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     num_indices: u32,
+
+    // Texture
+    diffuse_texture: texture::Texture,
+    diffuse_bind_group: BindGroup,
 }
 
 impl State {
@@ -114,7 +97,7 @@ impl State {
         .await
         .unwrap();
 
-        let (device, queue) = adapter
+        let (device, mut queue) = adapter
             .request_device(&DeviceDescriptor {
                 extensions: wgpu::Extensions {
                     anisotropic_filtering: false,
@@ -133,9 +116,65 @@ impl State {
 
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
+        // Load the tree picture
+        let diffuse_bytes = include_bytes!("../resources/happy-tree.png");
+        let (diffuse_texture, cmd_buffer) = texture::Texture::from_bytes(&device, diffuse_bytes).unwrap();
+
+        queue.submit(&[cmd_buffer]);
+
+        // let diffuse_texture_view = diffuse_texture.create_default_view();
+        // let diffuse_sampler = device.create_sampler(&SamplerDescriptor {
+        //     address_mode_u: AddressMode::ClampToEdge,
+        //     address_mode_v: AddressMode::ClampToEdge,
+        //     address_mode_w: AddressMode::ClampToEdge,
+        //     mag_filter: FilterMode::Linear,
+        //     min_filter: FilterMode::Nearest,
+        //     mipmap_filter: FilterMode::Nearest,
+        //     lod_min_clamp: -100.0,
+        //     lod_max_clamp: 100.0,
+        //     compare: CompareFunction::Always
+        // });
+        //
+        let texture_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            bindings: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStage::FRAGMENT,
+                    ty: BindingType::SampledTexture {
+                        multisampled: false,
+                        dimension: TextureViewDimension::D2,
+                        component_type: TextureComponentType::Uint,
+                    },
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStage::FRAGMENT,
+                    ty: BindingType::Sampler {
+                        comparison: false,
+                    },
+                },
+            ],
+            label: Some("texture_bind_group_layout"),
+        });
+
+        let diffuse_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            bindings: &[
+                Binding {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&diffuse_texture.view),
+                },
+                Binding {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&diffuse_texture.sampler),
+                },
+            ],
+            label: Some("diffuse_bind_group"),
+        });
+
         // Include GLSL shaders
-        let vs_src = include_str!("shader.vert");
-        let fs_src = include_str!("shader.frag");
+        let vs_src = include_str!("../shaders/shader.vert");
+        let fs_src = include_str!("../shaders/shader.frag");
 
         // Compile the shaders
         let vs_spirv = glsl_to_spirv::compile(vs_src, glsl_to_spirv::ShaderType::Vertex).unwrap();
@@ -150,7 +189,7 @@ impl State {
         let fs_module = device.create_shader_module(&fs_data);
 
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&texture_bind_group_layout],
         });
 
         let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -199,8 +238,6 @@ impl State {
         let index_buffer =
             device.create_buffer_with_data(bytemuck::cast_slice(INDICES), BufferUsage::INDEX);
 
-        let use_color = true;
-
         Self {
             surface,
             adapter,
@@ -213,6 +250,8 @@ impl State {
             vertex_buffer,
             index_buffer,
             num_indices,
+            diffuse_texture,
+            diffuse_bind_group,
         }
     }
 
@@ -261,6 +300,7 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_vertex_buffer(0, &self.vertex_buffer, 0, 0);
             render_pass.set_index_buffer(&self.index_buffer, 0, 0);
+            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
