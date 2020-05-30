@@ -1,4 +1,6 @@
+mod camera;
 mod texture;
+mod uniform;
 
 use futures::executor;
 use image::GenericImageView;
@@ -21,6 +23,9 @@ use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
+use cgmath::Vector3;
+use camera::Camera;
+use crate::uniform::Uniforms;
 
 const VERTICES: &[Vertex] = &[
     Vertex {
@@ -106,6 +111,14 @@ struct State {
     // Texture
     diffuse_texture: texture::Texture,
     diffuse_bind_group: BindGroup,
+
+    // Camera
+    camera: Camera,
+
+    // Uniforms
+    uniforms: Uniforms,
+    uniform_buffer: Buffer,
+    uniform_bind_group: BindGroup,
 }
 
 impl State {
@@ -151,19 +164,6 @@ impl State {
 
         queue.submit(&[cmd_buffer]);
 
-        // let diffuse_texture_view = diffuse_texture.create_default_view();
-        // let diffuse_sampler = device.create_sampler(&SamplerDescriptor {
-        //     address_mode_u: AddressMode::ClampToEdge,
-        //     address_mode_v: AddressMode::ClampToEdge,
-        //     address_mode_w: AddressMode::ClampToEdge,
-        //     mag_filter: FilterMode::Linear,
-        //     min_filter: FilterMode::Nearest,
-        //     mipmap_filter: FilterMode::Nearest,
-        //     lod_min_clamp: -100.0,
-        //     lod_max_clamp: 100.0,
-        //     compare: CompareFunction::Always
-        // });
-        //
         let texture_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 bindings: &[
@@ -198,6 +198,58 @@ impl State {
                 },
             ],
             label: Some("diffuse_bind_group"),
+        });
+
+        let camera = Camera {
+            eye: (0.0, 1.0, 2.0).into(),
+            target: (0.0, 0.0, 0.0).into(),
+            up: Vector3::unit_y(),
+            aspect: sc_desc.width as f32 / sc_desc.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        };
+
+        let mut uniforms = Uniforms::new();
+        uniforms.update_view_proj(&camera);
+
+        let uniform_buffer = device.create_buffer_with_data(
+            bytemuck::cast_slice(&[uniforms]),
+            BufferUsage::UNIFORM | BufferUsage::COPY_DST,
+        );
+
+        let uniform_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            bindings: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStage::VERTEX,
+                    ty: BindingType::UniformBuffer {
+                        dynamic: false,
+                    },
+                }
+            ],
+            label: Some("uniform_bind_layout_layout"),
+        });
+
+        let uniform_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            layout: &uniform_bind_group_layout,
+            bindings: &[
+                Binding {
+                    binding: 0,
+                    resource: BindingResource::Buffer {
+                        buffer: &uniform_buffer,
+                        range: 0..std::mem::size_of_val(&uniforms) as BufferAddress,
+                    },
+                },
+            ],
+            label: Some("uniform_bind_group"),
+        });
+
+        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            bind_group_layouts: &[
+                &texture_bind_group_layout,
+                &uniform_bind_group_layout,
+            ]
         });
 
         // Include GLSL shaders
@@ -280,6 +332,10 @@ impl State {
             num_indices,
             diffuse_texture,
             diffuse_bind_group,
+            camera,
+            uniforms,
+            uniform_buffer,
+            uniform_bind_group
         }
     }
 
@@ -326,9 +382,11 @@ impl State {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, &self.vertex_buffer, 0, 0);
             render_pass.set_index_buffer(&self.index_buffer, 0, 0);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
